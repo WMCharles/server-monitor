@@ -1,0 +1,24 @@
+[Unit]
+Description=Telegram Server Monitor Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/server-monitor
+EnvironmentFile=/opt/server-monitor/.env
+ExecStart=/opt/server-monitor/.venv/bin/python /opt/server-monitor/main.py
+Restart=on-failure
+RestartSec=5
+
+# Hardening. The bot remains read-only from Telegram.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full
+ReadWritePaths=/opt/server-monitor/data /opt/server-monitor/logs
+
+[Install]
+WantedBy=multi-user.target

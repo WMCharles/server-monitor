@@ -105,7 +105,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/ports - expected TCP ports\n"
         "/network - interfaces/counters\n"
         "/db - database reachability\n"
-        "/logs <service> [lines] - approved service logs\n"
+        "/logs <service|file|container> [lines] - approved logs\n"
         "/errors - recent error/critical journal entries\n"
         "/ssl - certificate expiry\n"
         "/backups - backup freshness\n"
@@ -594,31 +594,51 @@ async def db(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @restricted
 async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    m = monitor(context)
+    s = settings(context)
+
     if not context.args:
-        allowed = ", ".join(settings(context).log_services) or "none"
+        allowed = (
+            list(s.log_services)
+            + [name for name, _ in s.log_files]
+            + list(s.log_containers)
+        )
         await update.effective_message.reply_text(
-            f"Usage: /logs <service> [lines]\nAllowed: {allowed}"
+            "Usage: /logs <target> [lines]\n"
+            f"Allowed: {', '.join(allowed) or 'none'}"
         )
         return
 
-    service = context.args[0]
+    target = context.args[0]
     lines = 50
     if len(context.args) >= 2:
         try:
-            lines = min(max(int(context.args[1]), 1), 100)
+            lines = min(max(int(context.args[1]), 1), 200)
         except ValueError:
             await update.effective_message.reply_text("Lines must be a number.")
             return
 
     try:
-        text = await run_blocking(
-            monitor(context).service_logs, service, lines
-        )
+        if target in s.log_services:
+            text = await run_blocking(m.service_logs, target, lines)
+        elif target in {name for name, _ in s.log_files}:
+            text = await run_blocking(m.log_file, target, lines)
+        elif target in s.log_containers:
+            text = await run_blocking(m.container_logs, target, lines)
+        else:
+            allowed = (
+                list(s.log_services)
+                + [name for name, _ in s.log_files]
+                + list(s.log_containers)
+            )
+            raise ValueError(
+                f"Target not allowed. Allowed: {', '.join(allowed) or 'none'}"
+            )
     except ValueError as exc:
         await update.effective_message.reply_text(str(exc))
         return
 
-    await reply_chunks(update, f"LOGS — {service}\n\n{text}")
+    await reply_chunks(update, f"LOGS — {target}\n\n{text}")
 
 
 @restricted

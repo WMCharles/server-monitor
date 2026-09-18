@@ -9,7 +9,7 @@ from telegram.ext import Application
 from app.alerts import AlertEngine
 from app.commands import register_handlers
 from app.config import Settings
-from app.jobs import fast_monitor_job, slow_monitor_job
+from app.jobs import fast_monitor_job, log_monitor_job, slow_monitor_job
 from app.monitor import ServerMonitor
 from app.storage import Storage
 
@@ -129,6 +129,14 @@ def main() -> None:
         first=30,
         name="slow-monitor",
     )
+
+    if settings.log_files:
+        application.job_queue.run_repeating(
+            log_monitor_job,
+            interval=settings.log_check_interval_seconds,
+            first=60,
+            name="log-monitor",
+        )
 
     logging.getLogger(__name__).info(
         "Starting server monitor for %s", settings.server_name

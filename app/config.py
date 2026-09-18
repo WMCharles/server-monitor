@@ -74,6 +74,11 @@ class Settings:
     monitored_services: list[str] = field(default_factory=list)
     log_services: list[str] = field(default_factory=list)
     monitored_containers: list[str] = field(default_factory=list)
+    log_files: list[tuple[str, str]] = field(default_factory=list)
+    log_containers: list[str] = field(default_factory=list)
+    log_error_patterns: list[str] = field(default_factory=list)
+    log_error_threshold: int = 5
+    log_check_interval_seconds: int = 300
 
     health_urls: list[tuple[str, str]] = field(default_factory=list)
     monitored_ports: list[tuple[str, str, str]] = field(default_factory=list)
@@ -127,6 +132,14 @@ class Settings:
             monitored_services=_csv(os.getenv("MONITORED_SERVICES")),
             log_services=_csv(os.getenv("LOG_SERVICES")),
             monitored_containers=_csv(os.getenv("MONITORED_CONTAINERS")),
+            log_files=[(a, b) for a, b in _pairs(os.getenv("LOG_FILES"), 2)],
+            log_containers=_csv(os.getenv("LOG_CONTAINERS")),
+            log_error_patterns=(
+                _csv(os.getenv("LOG_ERROR_PATTERNS"))
+                or [".ERROR", ".CRITICAL", ".ALERT", ".EMERGENCY"]
+            ),
+            log_error_threshold=_int("LOG_ERROR_THRESHOLD", 5),
+            log_check_interval_seconds=_int("LOG_CHECK_INTERVAL_SECONDS", 300),
             health_urls=[(a, b) for a, b in _pairs(os.getenv("HEALTH_URLS"), 2)],
             monitored_ports=[
                 (a, b, c) for a, b, c in _pairs(os.getenv("MONITORED_PORTS"), 3)
@@ -157,6 +170,9 @@ class Settings:
 
         if self.alert_breach_count < 1 or self.alert_recovery_count < 1:
             raise ValueError("Alert counts must be at least 1")
+
+        if self.log_check_interval_seconds < 60:
+            raise ValueError("LOG_CHECK_INTERVAL_SECONDS must be at least 60")
 
         for warning, critical, name in [
             (self.cpu_warning, self.cpu_critical, "CPU"),

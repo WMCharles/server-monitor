@@ -23,6 +23,7 @@ the host, or runs arbitrary SQL. It only reads system state and reports it.
 - TLS certificate expiry
 - Backup freshness
 - Recent journal errors
+- Application log files (allowlisted) with new-error alerting
 - Recent failed SSH authentication attempts
 - Pending OS package updates
 - Reboot-required detection
@@ -63,12 +64,15 @@ server-monitor/
 │   ├── alerts.py       # debounce + alert lifecycle
 │   ├── commands.py     # Telegram command handlers
 │   ├── config.py       # .env parsing and validation
-│   ├── jobs.py         # fast/slow monitoring jobs
+│   ├── jobs.py         # fast/slow/log monitoring jobs
+│   ├── logwatch.py     # app-log tailing + new-error alerts
 │   ├── monitor.py      # read-only collectors (the core)
 │   ├── storage.py      # SQLite alert/meta persistence
 │   └── utils.py
 ├── data/               # SQLite state (gitignored)
 ├── logs/               # log files (gitignored)
+├── logrotate/
+│   └── ridemeds-laravel.conf
 ├── scripts/
 │   └── install.sh
 ├── systemd/
@@ -140,6 +144,11 @@ Full reference (see `.env.example` for all keys):
 | `MONITORED_SERVICES` | systemd services to watch | *(empty)* |
 | `LOG_SERVICES` | Services allowed via `/logs` | *(empty)* |
 | `MONITORED_CONTAINERS` | Containers that must be running | *(empty)* |
+| `LOG_FILES` | `name\|/absolute/path` app logs readable via `/logs` and scanned for errors | *(empty)* |
+| `LOG_CONTAINERS` | Containers readable via `/logs` (`docker logs`) | *(empty)* |
+| `LOG_ERROR_PATTERNS` | Substrings marking a log line as an error | `.ERROR,.CRITICAL,.ALERT,.EMERGENCY` |
+| `LOG_ERROR_THRESHOLD` | New matching lines per check before alerting | `5` |
+| `LOG_CHECK_INTERVAL_SECONDS` | App-log scan interval (min 60) | `300` |
 | `HEALTH_URLS` | `name\|URL` pairs, comma-separated | *(empty)* |
 | `MONITORED_PORTS` | `name\|host\|port` triples | *(empty)* |
 | `DB_TYPE` | `none`, `postgres`, `mysql`, `tcp` | `none` |
@@ -162,7 +171,7 @@ refuse to start. Always validate after editing by restarting the service.
 /processes  /topcpu  /topmem
 /docker  /containers
 /health  /ports  /network  /db
-/logs <service> [lines]  /errors
+/logs <service|file|container> [lines]  /errors
 /ssl  /backups
 /alerts  /thresholds
 /security  /sshfails  /updates  /rebootrequired
@@ -192,6 +201,20 @@ healthy check 2 -> RECOVERED
 Active alerts are persisted in SQLite and listed by `/alerts`. The in-memory
 breach counter resets if the service restarts, so a fresh breach needs a full
 `ALERT_BREACH_COUNT` checks again.
+
+## Application logs
+
+`/logs <target> [lines]` resolves the target in this order: a systemd unit from
+`LOG_SERVICES` (journald), then an app **file** from `LOG_FILES`, then a
+**container** from `LOG_CONTAINERS` (`docker logs`). Only allowlisted names are
+accepted — arbitrary paths are always rejected.
+
+When `LOG_FILES` is set, a separate job (`LOG_CHECK_INTERVAL_SECONDS`, default
+300s) tails each file from a persisted byte-offset cursor and raises a `critical`
+alert when the number of new lines matching `LOG_ERROR_PATTERNS` reaches
+`LOG_ERROR_THRESHOLD`. The first scan of a file only records its current size,
+so historical errors never alert. Rotation/truncation is detected and the
+cursor resets safely.
 
 ## Run with systemd
 

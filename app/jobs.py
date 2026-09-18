@@ -6,7 +6,9 @@ from telegram.ext import ContextTypes
 
 from .alerts import AlertEngine
 from .config import Settings
+from .logwatch import AppLogWatcher
 from .monitor import ServerMonitor
+from .storage import Storage
 from .utils import run_blocking
 
 logger = logging.getLogger(__name__)
@@ -49,3 +51,17 @@ async def slow_monitor_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         await _send_events(context, events)
     except Exception:
         logger.exception("Slow monitoring job failed")
+
+
+async def log_monitor_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    monitor: ServerMonitor = context.application.bot_data["monitor"]
+    storage: Storage = context.application.bot_data["storage"]
+    alerts: AlertEngine = context.application.bot_data["alerts"]
+
+    try:
+        watcher = AppLogWatcher(settings, monitor, storage, alerts)
+        events = await run_blocking(watcher.scan)
+        await _send_events(context, events)
+    except Exception:
+        logger.exception("Log monitoring job failed")

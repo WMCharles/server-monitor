@@ -91,6 +91,10 @@ LOAD_CRITICAL_MULTIPLIER=1.5
 DISK_MOUNTS=/
 MONITORED_SERVICES=nginx,php8.4-fpm,docker,ssh
 LOG_SERVICES=nginx,php8.4-fpm,docker,ssh
+LOG_CONTAINERS=<container-a>
+LOG_FILES=api|/var/www/app/storage/logs/laravel.log
+LOG_ERROR_THRESHOLD=5
+LOG_CHECK_INTERVAL_SECONDS=300
 MONITORED_CONTAINERS=<container-a>,<container-b>
 HEALTH_URLS=<name>|http://127.0.0.1:<port>/
 MONITORED_PORTS=ssh|127.0.0.1|22,http|127.0.0.1|80,https|127.0.0.1|443
@@ -153,7 +157,35 @@ sudo systemctl restart server-monitor
 Membership in the `docker` group is effectively root-equivalent — grant only if
 needed.
 
-## 5. Database backup cron
+## 5. Application log monitoring
+
+Tail allowlisted application logs and alert on new errors:
+
+```env
+LOG_FILES=api|/var/www/app/storage/logs/laravel.log,worker|/var/www/app/storage/logs/worker.log
+LOG_CONTAINERS=<container-a>
+LOG_ERROR_PATTERNS=.ERROR,.CRITICAL,.ALERT,.EMERGENCY
+LOG_ERROR_THRESHOLD=5
+LOG_CHECK_INTERVAL_SECONDS=300
+```
+
+- `/logs api 100` tails a file, `/logs <container>` uses `docker logs`,
+  `/logs nginx` uses journald.
+- Only names in the allowlists are accepted; arbitrary paths are rejected.
+- The scanner keeps a byte-offset cursor per file in the state DB and alerts
+  only on **new** matching lines (the first scan seeds the cursor).
+- The service user needs read access to each file. `ProtectSystem=full` still
+  permits reads under `/var`.
+
+**Rotate large app logs.** Laravel writes a single `laravel.log` that can grow
+without bound. Install the bundled rule:
+
+```bash
+sudo cp logrotate/ridemeds-laravel.conf /etc/logrotate.d/ridemeds-laravel
+sudo logrotate -d /etc/logrotate.d/ridemeds-laravel   # dry run
+```
+
+## 6. Database backup cron
 
 The monitor only *reports* backup freshness; it does not create backups. A
 companion script keeps a daily dump of the PostgreSQL container and prunes old
@@ -211,7 +243,7 @@ Notes:
 - Set `BACKUP_TARGETS=<name>|/home/zogratis/dbackups|<max_age_hours>` to match
   the cadence (e.g. `96` for a tolerant 4-day window, `26` for strict daily).
 
-## 6. Timezone
+## 7. Timezone
 
 The bot displays times using `TIMEZONE`, independent of the host clock. To set
 the host itself to East Africa Time:

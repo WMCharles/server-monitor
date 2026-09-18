@@ -547,6 +547,50 @@ class ServerMonitor:
             return err or "No log output"
         return out or "No log entries"
 
+    def log_file_path(self, name: str) -> Path:
+        """Resolve an allowlisted application log name to its path."""
+        mapping = dict(self.settings.log_files)
+        if name not in mapping:
+            allowed = ", ".join(mapping) or "none"
+            raise ValueError(f"Log file not allowed. Allowed: {allowed}")
+        return Path(mapping[name])
+
+    def log_file(self, name: str, lines: int = 50) -> str:
+        path = self.log_file_path(name)
+        if not path.exists():
+            return f"Log file not found: {path}"
+        code, out, err = run_command(
+            [
+                "tail",
+                "-n",
+                str(min(max(lines, 1), 200)),
+                str(path),
+            ],
+            self.settings.command_timeout_seconds,
+        )
+        if code != 0 and not out:
+            return err or "No log output"
+        return out or "No log entries"
+
+    def container_logs(self, name: str, lines: int = 50) -> str:
+        if name not in self.settings.log_containers:
+            allowed = ", ".join(self.settings.log_containers) or "none"
+            raise ValueError(f"Container log not allowed. Allowed: {allowed}")
+        code, out, err = run_command(
+            [
+                "docker",
+                "logs",
+                "--tail",
+                str(min(max(lines, 1), 200)),
+                name,
+            ],
+            self.settings.command_timeout_seconds,
+        )
+        text = (out or "") + (err or "")
+        if not text.strip():
+            return "No log output"
+        return text.strip()
+
     def recent_errors(self) -> str:
         code, out, err = run_command(
             [

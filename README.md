@@ -294,8 +294,8 @@ HOSTS_FILE=/opt/server-monitor/hosts.json
 Additional commands in multi-VM mode:
 
 ```text
-/servers            list configured servers (▶ marks the active one)
-/server <name>      switch the active server for this chat
+/servers            list configured servers (tap a button to switch)
+/server             show a tap-to-select keyboard (/server <name> still works)
 /status all         compact health for every server
 ```
 

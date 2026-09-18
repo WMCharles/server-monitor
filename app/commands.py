@@ -3,8 +3,13 @@ from __future__ import annotations
 import functools
 from datetime import datetime
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+)
 
 from . import __version__
 from .config import Settings
@@ -138,8 +143,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/sshfails - recent failed SSH attempts\n"
         "/updates - pending OS packages\n"
         "/rebootrequired - reboot flag\n"
-        "/servers - list configured servers\n"
-        "/server <name> - switch active server\n"
+        "/servers - list servers (tap to select)\n"
+        "/server [name] - choose active server\n"
         "/whoami - Telegram IDs\n"
         "/version - bot version"
     )
@@ -346,6 +351,22 @@ async def fleet_status(update: Update, context: ContextTypes.DEFAULT_TYPE, fleet
     await reply_chunks(update, "\n".join(lines))
 
 
+def _server_keyboard(fleet, active: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for name in fleet.names():
+        label = f"✅ {name}" if name == active else name
+        row.append(
+            InlineKeyboardButton(label, callback_data=f"srv:{name}")
+        )
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
 @restricted
 async def servers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     fleet = context.application.bot_data.get("fleet")
@@ -360,8 +381,10 @@ async def servers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         mark = "\u25b6" if name == active else " "
         where = "local" if target in ("", "local") else target
         lines.append(f"{mark} {name} ({where})")
-    lines += ["", "Use /server <name> to switch."]
-    await update.effective_message.reply_text("\n".join(lines))
+    lines += ["", "Tap a server to switch, or use /server <name>."]
+    await update.effective_message.reply_text(
+        "\n".join(lines), reply_markup=_server_keyboard(fleet, active)
+    )
 
 
 @restricted
@@ -372,19 +395,57 @@ async def server_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "Single-server mode (HOSTS_FILE not configured)."
         )
         return
-    if not context.args:
+
+    if context.args:
+        name = context.args[0]
+        if name not in fleet.names():
+            await update.effective_message.reply_text(
+                f"Unknown server. Available: {', '.join(fleet.names())}"
+            )
+            return
+        context.chat_data["server"] = name
         await update.effective_message.reply_text(
-            "Usage: /server <name>\nAvailable: " + ", ".join(fleet.names())
+            f"Active server set to {name}.",
+            reply_markup=_server_keyboard(fleet, name),
         )
         return
-    name = context.args[0]
+
+    active = context.chat_data.get("server") or fleet.first()
+    await update.effective_message.reply_text(
+        "Select the active server:",
+        reply_markup=_server_keyboard(fleet, active),
+    )
+
+
+async def server_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    base = context.application.bot_data["settings"]
+    user = update.effective_user
+    if not base.allowed_user_ids or (
+        user is not None and user.id not in base.allowed_user_ids
+    ):
+        await query.edit_message_text("Unauthorized.")
+        return
+
+    fleet = context.application.bot_data.get("fleet")
+    if fleet is None:
+        await query.edit_message_text(
+            "Single-server mode (HOSTS_FILE not configured)."
+        )
+        return
+
+    name = (query.data or "").split(":", 1)[-1]
     if name not in fleet.names():
-        await update.effective_message.reply_text(
-            f"Unknown server. Available: {', '.join(fleet.names())}"
-        )
+        await query.edit_message_text("Unknown server.")
         return
+
     context.chat_data["server"] = name
-    await update.effective_message.reply_text(f"Active server set to {name}.")
+    await query.edit_message_text(
+        f"Active server: {name}\n\nNow run /status, /cpu, /disk, /services, …",
+        reply_markup=_server_keyboard(fleet, name),
+    )
 
 
 @restricted
@@ -976,3 +1037,7 @@ def register_handlers(application: Application) -> None:
     ]
     for command, callback in handlers:
         application.add_handler(CommandHandler(command, callback))
+
+    application.add_handler(
+        CallbackQueryHandler(server_callback, pattern=r"^srv:")
+    )

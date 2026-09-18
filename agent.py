@@ -47,6 +47,7 @@ ALLOWED_METHODS = {
     "ssl_certificates",
     "backup_status",
     "service_logs",
+    "log_targets",
     "log_file",
     "container_logs",
     "recent_errors",

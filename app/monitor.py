@@ -555,6 +555,14 @@ class ServerMonitor:
             raise ValueError(f"Log file not allowed. Allowed: {allowed}")
         return Path(mapping[name])
 
+    def log_targets(self) -> dict:
+        """Names this host allows via /logs (services, files, containers)."""
+        return {
+            "services": list(self.settings.log_services),
+            "files": [name for name, _ in self.settings.log_files],
+            "containers": list(self.settings.log_containers),
+        }
+
     def log_file(self, name: str, lines: int = 50) -> str:
         path = self.log_file_path(name)
         if not path.exists():

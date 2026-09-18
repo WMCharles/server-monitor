@@ -196,10 +196,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
     container_lines = []
-    configured_containers = set(s.monitored_containers)
+    configured_containers = list(snap.get("monitored_containers", []))
     if configured_containers:
         found = {row["name"]: row for row in snap["containers"]}
-        for name in s.monitored_containers:
+        for name in configured_containers:
             row = found.get(name)
             good = bool(
                 row
@@ -729,14 +729,19 @@ async def db(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @restricted
 async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     m = monitor(context)
-    s = settings(context)
+
+    try:
+        targets = await run_blocking(m.log_targets)
+    except Exception as exc:
+        await update.effective_message.reply_text(f"⚠️ {exc}")
+        return
+    allowed = (
+        list(targets["services"])
+        + list(targets["files"])
+        + list(targets["containers"])
+    )
 
     if not context.args:
-        allowed = (
-            list(s.log_services)
-            + [name for name, _ in s.log_files]
-            + list(s.log_containers)
-        )
         await update.effective_message.reply_text(
             "Usage: /logs <target> [lines]\n"
             f"Allowed: {', '.join(allowed) or 'none'}"
@@ -753,18 +758,13 @@ async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
     try:
-        if target in s.log_services:
+        if target in targets["services"]:
             text = await run_blocking(m.service_logs, target, lines)
-        elif target in {name for name, _ in s.log_files}:
+        elif target in targets["files"]:
             text = await run_blocking(m.log_file, target, lines)
-        elif target in s.log_containers:
+        elif target in targets["containers"]:
             text = await run_blocking(m.container_logs, target, lines)
         else:
-            allowed = (
-                list(s.log_services)
-                + [name for name, _ in s.log_files]
-                + list(s.log_containers)
-            )
             raise ValueError(
                 f"Target not allowed. Allowed: {', '.join(allowed) or 'none'}"
             )

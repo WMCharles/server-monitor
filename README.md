@@ -28,6 +28,7 @@ the host, or runs arbitrary SQL. It only reads system state and reports it.
 - Pending OS package updates
 - Reboot-required detection
 - Persistent active-alert state using SQLite
+- Multi-VM mode: one central bot + read-only SSH agents per host
 - Consecutive-check alert debounce and recovery notifications
 - Telegram user allowlist
 - Telegram command-menu registration
@@ -64,11 +65,13 @@ server-monitor/
 │   ├── alerts.py       # debounce + alert lifecycle
 │   ├── commands.py     # Telegram command handlers
 │   ├── config.py       # .env parsing and validation
+│   ├── fleet.py        # multi-VM transport (local + SSH agents)
 │   ├── jobs.py         # fast/slow/log monitoring jobs
 │   ├── logwatch.py     # app-log tailing + new-error alerts
 │   ├── monitor.py      # read-only collectors (the core)
 │   ├── storage.py      # SQLite alert/meta persistence
 │   └── utils.py
+├── agent.py            # remote snapshot agent (multi-VM)
 ├── data/               # SQLite state (gitignored)
 ├── logs/               # log files (gitignored)
 ├── logrotate/
@@ -82,6 +85,7 @@ server-monitor/
 ├── .env.example
 ├── .gitignore
 ├── DEPLOYMENT.md       # production deployment runbook
+├── hosts.example.json  # multi-VM inventory example
 ├── LICENSE
 ├── main.py
 ├── README.md
@@ -251,11 +255,54 @@ python3 -m compileall app main.py
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the production setup, permissions,
 backup cron, and operations runbook.
 
-## Extending to multiple VMs
+## Multi-VM mode
 
-Monitoring code is isolated in `app/monitor.py`, so this can later become a
-per-VM agent whose snapshots are requested by a central bot without rewriting
-the command/alert concepts.
+The same bot can monitor several hosts. One **central** bot polls a read-only
+**agent** on each VM over SSH; there is still a single Telegram token and a
+single alert chat.
+
+```
+VM A agent ─┐
+VM B agent ─┼─► central bot (Telegram) ─► one alert chat
+VM C agent ─┘     ssh each host, merge snapshots
+```
+
+- `agent.py` runs on each VM and prints a JSON snapshot using that host's own
+  `.env`. It never holds a Telegram token.
+- The central bot reads a JSON inventory (`HOSTS_FILE`) and answers commands for
+  the selected host. Alerts are keyed `host:metric` and the alert text names the
+  host.
+- A `target` of `local` runs the collector in-process (use it for the central
+  host itself).
+
+`hosts.example.json`:
+
+```json
+[
+  {"name": "mpanzi", "target": "local"},
+  {"name": "kifaru", "target": "kifaru", "command": "cd /opt/server-monitor && .venv/bin/python agent.py"},
+  {"name": "delware", "target": "delware", "command": "cd /opt/server-monitor && .venv/bin/python agent.py"}
+]
+```
+
+Enable it with:
+
+```env
+HOSTS_FILE=/opt/server-monitor/hosts.json
+```
+
+Additional commands in multi-VM mode:
+
+```text
+/servers            list configured servers (▶ marks the active one)
+/server <name>      switch the active server for this chat
+/status all         compact health for every server
+```
+
+Every other command (`/cpu`, `/disk`, `/services`, `/logs`, …) applies to the
+active server. With `HOSTS_FILE` unset the bot runs in single-VM mode exactly as
+before. See [DEPLOYMENT.md](DEPLOYMENT.md) for the full rollout, including SSH
+trust and per-host collectors.
 
 ## License
 

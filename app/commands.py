@@ -50,12 +50,35 @@ def restricted(func):
     return wrapper
 
 
-def monitor(context) -> ServerMonitor:
+class _SettingsView:
+    """Settings proxy that reports the active server's display name."""
+
+    def __init__(self, base, server_name: str):
+        object.__setattr__(self, "_base", base)
+        object.__setattr__(self, "_server_name", server_name)
+
+    def __getattr__(self, item):
+        return getattr(object.__getattribute__(self, "_base"), item)
+
+    @property
+    def server_name(self) -> str:
+        return object.__getattribute__(self, "_server_name")
+
+
+def monitor(context):
+    fleet = context.application.bot_data.get("fleet")
+    if fleet is not None:
+        return fleet.active(context)
     return context.application.bot_data["monitor"]
 
 
-def settings(context) -> Settings:
-    return context.application.bot_data["settings"]
+def settings(context):
+    base = context.application.bot_data["settings"]
+    fleet = context.application.bot_data.get("fleet")
+    if fleet is None:
+        return base
+    name = context.chat_data.get("server") or fleet.first()
+    return _SettingsView(base, name)
 
 
 async def reply_chunks(update: Update, text: str) -> None:
@@ -115,6 +138,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/sshfails - recent failed SSH attempts\n"
         "/updates - pending OS packages\n"
         "/rebootrequired - reboot flag\n"
+        "/servers - list configured servers\n"
+        "/server <name> - switch active server\n"
         "/whoami - Telegram IDs\n"
         "/version - bot version"
     )
@@ -130,6 +155,11 @@ def metric_level(value: float, warning: float, critical: float) -> str:
 
 @restricted
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    fleet = context.application.bot_data.get("fleet")
+    if fleet is not None and context.args and context.args[0].lower() == "all":
+        await fleet_status(update, context, fleet)
+        return
+
     m = monitor(context)
     s = settings(context)
     snap = await run_blocking(m.fast_snapshot)
@@ -251,6 +281,110 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         + f"\n\nChecked: {snap['timestamp']:%Y-%m-%d %H:%M:%S %Z}"
     )
     await reply_chunks(update, text)
+
+
+async def fleet_status(update: Update, context: ContextTypes.DEFAULT_TYPE, fleet) -> None:
+    s = context.application.bot_data["settings"]
+    lines = ["FLEET STATUS", ""]
+    for name in fleet.names():
+        m = fleet.get(name)
+        try:
+            snap = await run_blocking(m.fast_snapshot)
+        except Exception as exc:
+            lines.append(f"\U0001f534 {name}: unreachable — {exc}")
+            continue
+
+        cpu = snap["cpu"]
+        mem = snap["memory"]
+        levels = [
+            metric_level(cpu["usage"], s.cpu_warning, s.cpu_critical),
+            metric_level(mem["percent"], s.memory_warning, s.memory_critical),
+        ]
+        disk_bits = []
+        for fs in snap["filesystems"]:
+            if fs.get("error"):
+                levels.append("critical")
+                disk_bits.append(f"{fs['mount']}:ERR")
+            else:
+                levels.append(
+                    metric_level(fs["percent"], s.disk_warning, s.disk_critical)
+                )
+                disk_bits.append(f"{fs['mount']}:{fs['percent']:.0f}%")
+        for row in snap["services"]:
+            levels.append("healthy" if row["active"] else "critical")
+        for row in snap["ports"]:
+            levels.append("healthy" if row["open"] else "critical")
+        for row in snap["health"]:
+            levels.append("healthy" if row["ok"] else "critical")
+        db = snap["database"]
+        if db.get("configured"):
+            levels.append("healthy" if db["reachable"] else "critical")
+        expected = set(snap.get("monitored_containers", []))
+        if expected:
+            found = {r["name"]: r for r in snap["containers"]}
+            for cname in expected:
+                row = found.get(cname)
+                good = bool(
+                    row
+                    and row["state"] == "running"
+                    and row["health"] != "unhealthy"
+                )
+                levels.append("healthy" if good else "critical")
+
+        overall = (
+            "critical" if "critical" in levels
+            else "warning" if "warning" in levels
+            else "healthy"
+        )
+        lines.append(
+            f"{status_icon(overall)} {name}: CPU {cpu['usage']:.0f}% | "
+            f"RAM {mem['percent']:.0f}% | "
+            f"disk {', '.join(disk_bits) or 'n/a'}"
+        )
+
+    lines += ["", "Use /server <name>, then any command, for detail."]
+    await reply_chunks(update, "\n".join(lines))
+
+
+@restricted
+async def servers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    fleet = context.application.bot_data.get("fleet")
+    if fleet is None:
+        await update.effective_message.reply_text(
+            "Single-server mode (HOSTS_FILE not configured)."
+        )
+        return
+    active = context.chat_data.get("server") or fleet.first()
+    lines = ["SERVERS", ""]
+    for name, target, _ in settings(context).servers:
+        mark = "\u25b6" if name == active else " "
+        where = "local" if target in ("", "local") else target
+        lines.append(f"{mark} {name} ({where})")
+    lines += ["", "Use /server <name> to switch."]
+    await update.effective_message.reply_text("\n".join(lines))
+
+
+@restricted
+async def server_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    fleet = context.application.bot_data.get("fleet")
+    if fleet is None:
+        await update.effective_message.reply_text(
+            "Single-server mode (HOSTS_FILE not configured)."
+        )
+        return
+    if not context.args:
+        await update.effective_message.reply_text(
+            "Usage: /server <name>\nAvailable: " + ", ".join(fleet.names())
+        )
+        return
+    name = context.args[0]
+    if name not in fleet.names():
+        await update.effective_message.reply_text(
+            f"Unknown server. Available: {', '.join(fleet.names())}"
+        )
+        return
+    context.chat_data["server"] = name
+    await update.effective_message.reply_text(f"Active server set to {name}.")
 
 
 @restricted
@@ -836,6 +970,8 @@ def register_handlers(application: Application) -> None:
         ("sshfails", sshfails),
         ("updates", updates),
         ("rebootrequired", rebootrequired),
+        ("servers", servers_command),
+        ("server", server_command),
         ("version", version),
     ]
     for command, callback in handlers:

@@ -9,9 +9,12 @@ from telegram.ext import Application
 from app.alerts import AlertEngine
 from app.commands import register_handlers
 from app.config import Settings
+from app.fleet import Fleet
 from app.jobs import fast_monitor_job, log_monitor_job, slow_monitor_job
 from app.monitor import ServerMonitor
 from app.storage import Storage
+
+logger = logging.getLogger(__name__)
 
 
 def configure_logging() -> None:
@@ -59,6 +62,8 @@ async def post_init(application: Application) -> None:
         BotCommand("sshfails", "Recent failed SSH attempts"),
         BotCommand("updates", "Pending package updates"),
         BotCommand("rebootrequired", "Check whether reboot is required"),
+        BotCommand("servers", "List configured servers"),
+        BotCommand("server", "Switch active server"),
         BotCommand("whoami", "Show your Telegram user/chat ID"),
         BotCommand("version", "Bot version"),
         BotCommand("help", "Show command help"),
@@ -109,6 +114,22 @@ def main() -> None:
     application.bot_data["storage"] = storage
     application.bot_data["monitor"] = monitor
     application.bot_data["alerts"] = alerts
+
+    if settings.servers:
+        application.bot_data["fleet"] = Fleet(settings, monitor)
+        logger.info(
+            "Multi-VM mode: %s", ", ".join(name for name, _, _ in settings.servers)
+        )
+
+    async def on_error(update, context) -> None:
+        logger.error("Handler error: %s", context.error)
+        if update is not None and update.effective_message is not None:
+            try:
+                await update.effective_message.reply_text(f"⚠️ {context.error}")
+            except Exception:
+                logger.exception("Failed to report handler error")
+
+    application.add_error_handler(on_error)
 
     register_handlers(application)
 

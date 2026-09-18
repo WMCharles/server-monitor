@@ -34,7 +34,9 @@ class AlertEngine:
         desired: str,
         title: str,
         details: str,
+        server: str | None = None,
     ) -> AlertEvent | None:
+        server_name = server or self.settings.server_name
         active = self.storage.get_active_alert(key)
 
         if desired == "ok":
@@ -54,7 +56,7 @@ class AlertEngine:
                 level="recovered",
                 text=(
                     f"RECOVERED\n\n"
-                    f"Server: {self.settings.server_name}\n"
+                    f"Server: {server_name}\n"
                     f"Check: {title}\n"
                     f"Previous: {previous_level.upper()}\n"
                     f"{details}"
@@ -80,7 +82,7 @@ class AlertEngine:
                 level=desired,
                 text=(
                     f"ALERT UPDATED — {desired.upper()}\n\n"
-                    f"Server: {self.settings.server_name}\n"
+                    f"Server: {server_name}\n"
                     f"Check: {title}\n"
                     f"{details}"
                 ),
@@ -95,7 +97,7 @@ class AlertEngine:
             level=desired,
             text=(
                 f"SERVER ALERT — {desired.upper()}\n\n"
-                f"Server: {self.settings.server_name}\n"
+                f"Server: {server_name}\n"
                 f"Check: {title}\n"
                 f"{details}"
             ),
@@ -113,9 +115,13 @@ class AlertEngine:
             return "warning"
         return "ok"
 
-    def evaluate_fast(self, snapshot: dict) -> list[AlertEvent]:
+    def evaluate_fast(
+        self, snapshot: dict, server: str | None = None
+    ) -> list[AlertEvent]:
         s = self.settings
         events: list[AlertEvent] = []
+        prefix = f"{server}:" if server else ""
+        label = f"[{server}] " if server else ""
 
         def emit(
             key: str,
@@ -123,7 +129,9 @@ class AlertEngine:
             title: str,
             details: str,
         ) -> None:
-            event = self.transition(key, level, title, details)
+            event = self.transition(
+                prefix + key, level, f"{label}{title}", details, server
+            )
             if event:
                 events.append(event)
 
@@ -216,7 +224,9 @@ class AlertEngine:
                 f"State: {service['state']}",
             )
 
-        configured_containers = set(s.monitored_containers)
+        configured_containers = set(
+            snapshot.get("monitored_containers", s.monitored_containers)
+        )
         if configured_containers:
             found = {row["name"]: row for row in snapshot["containers"]}
             for name in configured_containers:
@@ -278,11 +288,17 @@ class AlertEngine:
 
         return events
 
-    def evaluate_slow(self, snapshot: dict) -> list[AlertEvent]:
+    def evaluate_slow(
+        self, snapshot: dict, server: str | None = None
+    ) -> list[AlertEvent]:
         events: list[AlertEvent] = []
+        prefix = f"{server}:" if server else ""
+        label = f"[{server}] " if server else ""
 
         def emit(key: str, level: str, title: str, details: str) -> None:
-            event = self.transition(key, level, title, details)
+            event = self.transition(
+                prefix + key, level, f"{label}{title}", details, server
+            )
             if event:
                 events.append(event)
 

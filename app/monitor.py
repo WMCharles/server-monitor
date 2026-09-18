@@ -708,6 +708,7 @@ class ServerMonitor:
             "services": self.services(),
             "docker": self.docker_status(),
             "containers": self.containers(),
+            "monitored_containers": list(self.settings.monitored_containers),
             "health": self.health_checks(),
             "ports": self.ports(),
             "database": self.database(),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -79,6 +80,7 @@ class Settings:
     log_error_patterns: list[str] = field(default_factory=list)
     log_error_threshold: int = 5
     log_check_interval_seconds: int = 300
+    servers: list[tuple[str, str, str]] = field(default_factory=list)
 
     health_urls: list[tuple[str, str]] = field(default_factory=list)
     monitored_ports: list[tuple[str, str, str]] = field(default_factory=list)
@@ -100,6 +102,23 @@ class Settings:
 
         raw_chat = os.getenv("ALERT_CHAT_ID", "").strip()
         db_port_raw = os.getenv("DB_PORT", "").strip()
+
+        servers: list[tuple[str, str, str]] = []
+        hosts_file = os.getenv("HOSTS_FILE", "").strip()
+        if hosts_file:
+            hosts_path = Path(hosts_file)
+            if hosts_path.exists():
+                for item in json.loads(hosts_path.read_text()):
+                    name = str(item.get("name", "")).strip()
+                    if not name:
+                        continue
+                    servers.append(
+                        (
+                            name,
+                            str(item.get("target", "local")).strip() or "local",
+                            str(item.get("command", "")).strip(),
+                        )
+                    )
 
         return cls(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
@@ -140,6 +159,7 @@ class Settings:
             ),
             log_error_threshold=_int("LOG_ERROR_THRESHOLD", 5),
             log_check_interval_seconds=_int("LOG_CHECK_INTERVAL_SECONDS", 300),
+            servers=servers,
             health_urls=[(a, b) for a, b in _pairs(os.getenv("HEALTH_URLS"), 2)],
             monitored_ports=[
                 (a, b, c) for a, b, c in _pairs(os.getenv("MONITORED_PORTS"), 3)
@@ -173,6 +193,15 @@ class Settings:
 
         if self.log_check_interval_seconds < 60:
             raise ValueError("LOG_CHECK_INTERVAL_SECONDS must be at least 60")
+
+        names = [name for name, _, _ in self.servers]
+        if len(names) != len(set(names)):
+            raise ValueError("Duplicate server names in HOSTS_FILE")
+        for name, target, command in self.servers:
+            if target not in ("", "local") and not command:
+                raise ValueError(
+                    f"Server '{name}': 'command' is required for remote targets"
+                )
 
         for warning, critical, name in [
             (self.cpu_warning, self.cpu_critical, "CPU"),

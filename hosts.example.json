@@ -1,0 +1,22 @@
+[
+  {
+    "name": "mpanzi",
+    "target": "local",
+    "comment": "The central host itself; runs the collector in-process."
+  },
+  {
+    "name": "kifaru",
+    "target": "kifaru",
+    "command": "cd /opt/server-monitor && .venv/bin/python agent.py"
+  },
+  {
+    "name": "delware",
+    "target": "delware",
+    "command": "cd /opt/server-monitor && .venv/bin/python agent.py"
+  },
+  {
+    "name": "mpanzi_admin",
+    "target": "mpanzi_admin",
+    "command": "cd ~/server-monitor && .venv/bin/python agent.py"
+  }
+]

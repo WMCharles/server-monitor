@@ -297,6 +297,95 @@ PY
 | Docker checks fail | User missing `docker` group membership |
 | Slow checks absent | They run every `SLOW_CHECK_INTERVAL_SECONDS` (default hourly) |
 
+## 8. Multi-VM deployment
+
+One central bot + a read-only agent per monitored VM.
+
+### Central host
+
+1. Install the code as in sections 1–4 and set the Telegram token.
+2. Add its own collector settings (it monitors itself via `target: local`).
+3. Point it at an inventory:
+   ```env
+   HOSTS_FILE=/opt/server-monitor/hosts.json
+   ```
+4. Create `hosts.json` (see `hosts.example.json`).
+
+### SSH trust (central → each target)
+
+```bash
+# on the central host
+ssh-keygen -t ed25519 -f ~/.ssh/monitor_key -N ''
+cat ~/.ssh/monitor_key.pub   # append to each target's authorized_keys
+```
+
+Add `~/.ssh/config` entries on the central host so the inventory `target` names
+resolve:
+
+```sshconfig
+Host kifaru
+    HostName <ip-or-dns>
+    User <user>
+    IdentityFile ~/.ssh/monitor_key
+```
+
+Verify before continuing:
+
+```bash
+ssh -i ~/.ssh/monitor_key kifaru 'hostname && python3 --version'
+```
+
+### Agent host
+
+```bash
+# copy agent.py + app/ (+ a collector-only .env) into place
+sudo mkdir -p /opt/server-monitor && sudo chown "$USER" /opt/server-monitor
+cd /opt/server-monitor
+python3 -m venv .venv
+.venv/bin/pip install psutil httpx python-dotenv
+.venv/bin/python agent.py snapshot fast | head -c 200   # smoke test
+```
+
+The agent `.env` holds only collector settings (services, disks, containers,
+health, ports, DB, SSL, backups) — **never** a Telegram token.
+
+#### Hosts without Python 3.10+
+
+The collectors use `dataclass(slots=True)`, so Python 3.10+ is required. On older
+hosts install Python 3.11 alongside the system Python (do **not** repoint
+`/usr/bin/python3`) — via deadsnakes, or without sudo using `uv`:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv python install 3.11
+uv venv --python 3.11 ~/server-monitor/.venv
+uv pip install --python ~/server-monitor/.venv psutil httpx python-dotenv
+```
+
+Then use a home-directory command in `hosts.json`:
+`cd ~/server-monitor && .venv/bin/python agent.py`.
+
+### Verify the fleet
+
+```text
+/servers            # lists hosts, ▶ marks active
+/status all         # compact health for every host
+/server kifaru      # switch, then /cpu /disk /services ...
+```
+
+Alerts now arrive keyed per host, e.g. `[kifaru] Disk usage /`.
+
+### Notes and limits
+
+- Thresholds are currently **global** (central settings); per-host thresholds
+  are not yet supported.
+- Each host's services/disks/containers come from **its own** `.env`, so a
+  container list is per-host and does not false-alarm on other hosts.
+- App-log **alerting** (`LOG_FILES`) runs on the central host only in this
+  version; remote `/logs <name>` tailing works for every host.
+- Unreachable hosts produce a `⚠️` reply on demand and a skipped cycle when
+  polling; they do not crash the bot.
+
 ## Security checklist
 
 - [ ] `.env` is mode `600` and gitignored

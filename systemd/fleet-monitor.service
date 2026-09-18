@@ -1,0 +1,32 @@
+# Central bot unit for a home-directory (no-sudo) install.
+# Adjust User/Group/WorkingDirectory/ExecStart paths to match the deployment.
+#
+#   sudo cp systemd/fleet-monitor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now fleet-monitor
+#
+# Note: ProtectHome is intentionally omitted because the install lives under
+# /home and the bot must read ~/.ssh/monitor_key to reach the agents.
+
+[Unit]
+Description=Telegram Fleet Server Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=masinde
+Group=masinde
+WorkingDirectory=/home/masinde/server-monitor
+EnvironmentFile=/home/masinde/server-monitor/.env
+ExecStart=/home/masinde/server-monitor/.venv/bin/python /home/masinde/server-monitor/main.py
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/masinde/server-monitor/data /home/masinde/server-monitor/logs
+
+[Install]
+WantedBy=multi-user.target

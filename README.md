@@ -78,6 +78,7 @@ server-monitor/
 ├── .env.example
 ├── .gitignore
 ├── DEPLOYMENT.md       # production deployment runbook
+├── LICENSE
 ├── main.py
 ├── README.md
 └── requirements.txt
@@ -232,3 +233,7 @@ backup cron, and operations runbook.
 Monitoring code is isolated in `app/monitor.py`, so this can later become a
 per-VM agent whose snapshots are requested by a central bot without rewriting
 the command/alert concepts.
+
+## License
+
+Released under the [MIT License](LICENSE).
